@@ -1,6 +1,7 @@
 
 from django.contrib import admin
 from django.urls import include, path
+from .deployment import healthz
 
 
 # =========================================================
@@ -8,6 +9,8 @@ from django.urls import include, path
 # =========================================================
 
 urlpatterns = [
+
+    path("healthz", healthz, name="healthz"),
 
     # Panel de administración Django
     path(

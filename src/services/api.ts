@@ -4,7 +4,12 @@ import * as SecureStore from 'expo-secure-store';
 const platformApiUrl = Platform.OS === 'web'
   ? process.env.EXPO_PUBLIC_API_URL_WEB
   : Platform.OS === 'android' ? process.env.EXPO_PUBLIC_API_URL_ANDROID : undefined;
-export const API_URL = (platformApiUrl?.trim() || process.env.EXPO_PUBLIC_API_URL || '').trim().replace(/\/+$/, '');
+const sameOriginWeb = Platform.OS === 'web' && process.env.EXPO_PUBLIC_API_SAME_ORIGIN === 'true';
+// Docker sirve Expo y /api bajo el mismo dominio. SSR no tiene origen de
+// navegador y no debe utilizar por accidente la URL de otro backend.
+export const API_URL = (sameOriginWeb
+  ? (typeof window !== 'undefined' ? window.location?.origin || '' : '')
+  : platformApiUrl?.trim() || process.env.EXPO_PUBLIC_API_URL || '').trim().replace(/\/+$/, '');
 const TOKEN_KEY = 'gestion.movil.sesion';
 let token: string | null = null;
 let csrf: string | null = null;

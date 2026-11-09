@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlsplit
 from dotenv import load_dotenv
 
 from movil.database_config import configuracion_neon_movil
+from .deployment import allowed_hosts_from_environment
 
 
 # =========================================
@@ -43,14 +44,10 @@ DEBUG = os.getenv(
 ).strip().lower() == "true"
 
 
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.getenv(
-        "ALLOWED_HOSTS",
-        "127.0.0.1,localhost"
-    ).split(",")
-    if host.strip()
-]
+ALLOWED_HOSTS = allowed_hosts_from_environment(os.environ)
+
+# Habilitar solo cuando Gunicorn escucha en loopback detrás del Node local.
+ENABLE_INTERNAL_PROXY = os.getenv("ENABLE_INTERNAL_PROXY", "False").strip().lower() == "true"
 
 
 # =========================================
@@ -86,6 +83,8 @@ INSTALLED_APPS = [
 # =========================================
 
 MIDDLEWARE = [
+
+    "servidor.deployment.InternalProxyMiddleware",
 
     "django.middleware.security.SecurityMiddleware",
 
@@ -391,12 +390,14 @@ SECURITY_RATE_LIMIT_ENABLED = os.getenv(
 # Por defecto solo usamos REMOTE_ADDR. No confiar en X-Forwarded-For
 # de usuarios arbitrarios. El administrador debe validar el proxy antes
 # de establecer HTTP_CF_CONNECTING_IP o HTTP_X_FORWARDED_FOR aquí.
-TRUSTED_CLIENT_IP_HEADER = os.getenv("TRUSTED_CLIENT_IP_HEADER", "").strip()
+TRUSTED_CLIENT_IP_HEADER = "" if ENABLE_INTERNAL_PROXY else os.getenv("TRUSTED_CLIENT_IP_HEADER", "").strip()
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 65536
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 X_FRAME_OPTIONS = "DENY"
+# Docker comprueba Django por HTTP local aunque la web pública fuerce HTTPS.
+SECURE_REDIRECT_EXEMPT = [r"^healthz$"]
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"

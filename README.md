@@ -2,6 +2,10 @@
 
 Aplicación móvil Expo SDK 58 / React Native con backend Django. Cada empresa administra sus clientes, proyectos y finanzas dentro de su organización. La aplicación tiene cuentas propias y una base Neon independiente de la del sistema web original.
 
+## Despliegue web en Render
+
+La web de Expo y la API Django pueden publicarse en un solo Web Service mediante el `Dockerfile` de la raíz. Sigue [la guía de despliegue en Render](docs/DESPLIEGUE_RENDER.md) para configurar los secretos, publicar el contenedor y comprobar el inicio de sesión.
+
 ## Funciones
 
 | Área | Comportamiento |

@@ -23,7 +23,7 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 
-function loadApi({ platform = 'android', androidVersion = 36, url = 'https://api.example.test/', webUrl, androidUrl, dev = true, fetch: fetchImpl, secureStore: storeOverrides = {}, permissions: permissionOverrides = {} } = {}) {
+function loadApi({ platform = 'android', androidVersion = 36, url = 'https://api.example.test/', webUrl, androidUrl, sameOrigin, browserOrigin = 'https://app.example.test', dev = true, fetch: fetchImpl, secureStore: storeOverrides = {}, permissions: permissionOverrides = {} } = {}) {
   const requests = [];
   const storage = new Map();
   const storageCalls = [];
@@ -49,11 +49,11 @@ function loadApi({ platform = 'android', androidVersion = 36, url = 'https://api
   });
   const module = { exports: {} };
   const context = {
-    module, exports: module.exports, process: { env: { EXPO_PUBLIC_API_URL: url, EXPO_PUBLIC_API_URL_WEB: webUrl, EXPO_PUBLIC_API_URL_ANDROID: androidUrl } },
+    module, exports: module.exports, process: { env: { EXPO_PUBLIC_API_URL: url, EXPO_PUBLIC_API_URL_WEB: webUrl, EXPO_PUBLIC_API_URL_ANDROID: androidUrl, EXPO_PUBLIC_API_SAME_ORIGIN: sameOrigin } },
     __DEV__: dev, AbortController, URL,
     console: { info: (...values) => logs.push(values.join(' ')), warn: (...values) => logs.push(values.join(' ')) },
     localStorage: forbiddenStorage, sessionStorage: forbiddenStorage,
-    window: { localStorage: forbiddenStorage, sessionStorage: forbiddenStorage },
+    ...(browserOrigin === null ? {} : { window: { location: { origin: browserOrigin }, localStorage: forbiddenStorage, sessionStorage: forbiddenStorage } }),
     setTimeout(callback, ms) { const id = ++timerId; timers.set(id, { callback, ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
     async fetch(requestUrl, options) {
@@ -84,6 +84,57 @@ test('web and Android can reach a local backend independently of the phone LAN a
     assert.equal(api.API_URL, expected);
     assert.equal(requests[0].url, `${expected}/api/sistema/app/csrf/`);
   }
+});
+
+test('same-origin web builds follow their public domain and keep cookie and CSRF authentication', async () => {
+  for (const browserOrigin of ['https://gestion-proyectos.onrender.com', 'https://app.example.test']) {
+    const { api, requests, storageCalls } = loadApi({
+      platform: 'web', sameOrigin: 'true', browserOrigin, dev: false,
+      url: 'https://previous-backend.example.test', webUrl: 'http://localhost:8000',
+      fetch: async requestUrl => requestUrl.endsWith('/csrf/')
+        ? reply({ ok: true, csrfToken: 'csrf-for-current-domain' })
+        : reply({ ok: true }),
+    });
+    await api.peticionSistema('login/', { metodo: 'POST', datos: { usuario: 'test' } });
+    assert.equal(api.API_URL, browserOrigin);
+    assert.deepEqual(requests.map(request => request.url), [
+      `${browserOrigin}/api/sistema/app/csrf/`,
+      `${browserOrigin}/api/sistema/app/login/`,
+    ]);
+    assert.equal(requests[1].headers['X-CSRFToken'], 'csrf-for-current-domain');
+    assert.equal(requests[1].headers.Authorization, undefined);
+    assert.ok(requests.every(request => request.credentials === 'include'));
+    assert.equal(storageCalls.length, 0);
+  }
+});
+
+test('same-origin web imports safely without a browser and never falls back to another API during SSR', async () => {
+  const { api, requests } = loadApi({ platform: 'web', sameOrigin: 'true', browserOrigin: null, dev: false });
+  assert.equal(api.API_URL, '');
+  await assert.rejects(api.peticionSistema('yo/'), error => error instanceof api.ApiError && error.status === 0);
+  assert.equal(requests.length, 0);
+});
+
+test('same-origin flag leaves native URLs and explicit separate-backend web builds unchanged', async () => {
+  for (const [platform, expected] of [
+    ['android', 'https://android-api.example.test'],
+    ['ios', 'https://api.example.test'],
+  ]) {
+    const { api, requests } = loadApi({ platform, sameOrigin: 'true', androidUrl: 'https://android-api.example.test', browserOrigin: null });
+    await api.peticionSistema('yo/');
+    assert.equal(api.API_URL, expected);
+    assert.equal(requests[0].url, `${expected}/api/sistema/app/yo/`);
+  }
+  for (const sameOrigin of [undefined, 'false', 'TRUE']) {
+    const { api } = loadApi({ platform: 'web', sameOrigin, webUrl: 'https://separate-api.example.test' });
+    assert.equal(api.API_URL, 'https://separate-api.example.test');
+  }
+});
+
+test('same-origin production builds still require HTTPS', async () => {
+  const { api, requests } = loadApi({ platform: 'web', sameOrigin: 'true', browserOrigin: 'http://localhost:3000', dev: false });
+  await assert.rejects(api.peticionSistema('csrf/'), error => error instanceof api.ApiError && /HTTPS/.test(error.message));
+  assert.equal(requests.length, 0);
 });
 
 test('Android 17 waits for local network permission before sending a login', async () => {
