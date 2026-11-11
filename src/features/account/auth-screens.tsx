@@ -1,64 +1,44 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router, type Href } from 'expo-router';
-import { useRef, useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Card, Field, Notice, colors } from '@/components/meg';
+import { useRef, useState } from 'react';
+import { Text, View } from 'react-native';
+import { Button, Field, Notice, colors } from '@/components/meg';
 import { useSession } from '@/context/session';
-import { API_URL, guardarToken, peticionSistema, rutaAuth } from '@/services/api';
+import { usePasswordRecovery } from '@/context/password-recovery';
+import { API_URL, peticionSistema, rutaAuth } from '@/services/api';
+import { AuthFrame, PasswordVisibility, authStyles as styles } from './auth-components';
 import { errorTexto } from './common';
-
-function AuthFrame({ children, registro = false }: { children: ReactNode; registro?: boolean }) {
-  return <LinearGradient colors={['#070F21', '#102D54', '#0A1830']} style={styles.flex}>
-    <SafeAreaView edges={registro ? ['left', 'right', 'bottom'] : ['top', 'left', 'right', 'bottom']} style={styles.flex}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-          <View style={styles.brand}>
-            <Image source={require('@/assets/images/logo-meg.png')} style={styles.logo} contentFit="contain" accessible accessibilityLabel="Logo de Proyectos MEG" />
-            <View style={styles.brandCopy}><Text style={styles.brandTitle}>PROYECTOS MEG</Text><Text style={styles.brandSubtitle}>Gestión para empresas de software</Text></View>
-          </View>
-          <Card style={styles.loginCard}>{children}</Card>
-          <Text style={styles.footer}>CLIENTES · PROYECTOS · FINANZAS</Text>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
-  </LinearGradient>;
-}
-
-function PasswordVisibility({ visible, onPress }: { visible: boolean; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={visible ? 'Ocultar contraseña' : 'Mostrar contraseña'} onPress={onPress} style={styles.showPassword}><Ionicons name={visible ? 'eye-off-outline' : 'eye-outline'} color={colors.muted} size={18} /><Text style={styles.showText}>{visible ? 'Ocultar contraseña' : 'Mostrar contraseña'}</Text></Pressable>;
-}
+import { LoginVerification, prepararDesafioLogin, type DesafioLogin, type SolicitudVerificacionLogin } from './login-verification';
 
 export function LoginScreen() {
   const { comprobarSesion, error: sessionError } = useSession();
+  const { avisoLogin, limpiarAviso, reiniciar } = usePasswordRecovery();
   const [usuario, setUsuario] = useState('');
   const [contrasena, setContrasena] = useState('');
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [desafio, setDesafio] = useState<DesafioLogin | null>(null);
   const bloqueo = useRef(false);
   async function enviar() {
     if (bloqueo.current) return;
     setError('');
+    limpiarAviso();
     if (!usuario.trim() || !contrasena) { setError('Ingresa tu usuario, correo o teléfono y tu contraseña.'); return; }
     bloqueo.current = true; setLoading(true);
     try {
-      const result = await peticionSistema<{ token?: string }>(rutaAuth('login'), { metodo: 'POST', datos: { usuario: usuario.trim(), contrasena } });
-      if (Platform.OS !== 'web') {
-        if (!result.token) throw new Error('No se pudo preparar tu sesión móvil. Intenta de nuevo.');
-        await guardarToken(result.token);
-      }
+      const result = await peticionSistema<SolicitudVerificacionLogin>(rutaAuth('login'), { metodo: 'POST', datos: { usuario: usuario.trim(), contrasena } });
       setContrasena('');
-      await comprobarSesion();
+      setDesafio(prepararDesafioLogin(result));
     } catch (err) { setError(errorTexto(err)); }
     finally { bloqueo.current = false; setLoading(false); }
   }
+  if (desafio) return <LoginVerification inicial={desafio} onCancelar={() => { setDesafio(null); setError(''); }} />;
   return <AuthFrame>
     <View style={styles.cardIcon}><Ionicons name="lock-closed-outline" color={colors.primary} size={25} /></View>
     <Text accessibilityRole="header" style={styles.cardTitle}>Bienvenido de nuevo</Text>
-    <Text style={styles.description}>Entra a tu espacio de trabajo.</Text>
+    <Text style={styles.description}>Entra a tu espacio de trabajo y confirma el código que enviaremos a tu correo.</Text>
+    <Notice tone="success" message={avisoLogin} />
     {!API_URL && <Notice tone="info" message="La conexión con el servidor aún no está configurada." />}
     <Field label="Usuario, correo o teléfono" placeholder="¿Cómo te registraste?" value={usuario} onChangeText={setUsuario} autoCapitalize="none" autoCorrect={false} autoComplete="username" textContentType="username" returnKeyType="next" maxLength={254} editable={!loading} />
     <Field label="Contraseña" placeholder="Ingresa tu contraseña" value={contrasena} onChangeText={setContrasena} secureTextEntry={!visible} autoCapitalize="none" autoComplete="current-password" textContentType="password" onSubmitEditing={() => void enviar()} returnKeyType="go" maxLength={256} editable={!loading} />
@@ -66,18 +46,20 @@ export function LoginScreen() {
     <Notice message={error || sessionError} />
     {Boolean(sessionError) && <Button label="Reintentar conexión" variant="secondary" loading={loading} onPress={() => void comprobarSesion()} />}
     <Button label="Entrar" icon="arrow-forward" loading={loading} disabled={!API_URL} onPress={() => void enviar()} />
+    <Button label="¿Olvidaste tu contraseña?" variant="secondary" disabled={loading} onPress={() => { reiniciar(); limpiarAviso(); setContrasena(''); setError(''); router.push('/recuperar-contrasena' as Href); }} />
     <Text style={styles.divider}>¿Es tu primera vez aquí?</Text>
     <Button label="Crear una cuenta" variant="secondary" disabled={loading} onPress={() => router.push('/registro' as Href)} />
   </AuthFrame>;
 }
 
 export function RegistroScreen() {
-  const { comprobarSesion, error: sessionError } = useSession();
+  const { error: sessionError } = useSession();
   const [form, setForm] = useState({ nombre_completo: '', correo: '', telefono: '', usuario: '', contrasena: '' });
   const [confirmacion, setConfirmacion] = useState('');
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [desafio, setDesafio] = useState<DesafioLogin | null>(null);
   const bloqueo = useRef(false);
   const cambiar = (campo: keyof typeof form, valor: string) => setForm(prev => ({ ...prev, [campo]: valor }));
   async function crear() {
@@ -89,20 +71,17 @@ export function RegistroScreen() {
     if (form.contrasena !== confirmacion) { setError('Las contraseñas no coinciden.'); return; }
     bloqueo.current = true; setLoading(true);
     try {
-      const result = await peticionSistema<{ token?: string }>(rutaAuth('registro'), { metodo: 'POST', datos: { ...form, nombre_completo: form.nombre_completo.trim(), correo: form.correo.trim().toLowerCase(), usuario: form.usuario.trim().toLowerCase(), telefono: form.telefono.trim() } });
-      if (Platform.OS !== 'web') {
-        if (!result.token) throw new Error('No se pudo preparar tu sesión móvil. Inicia sesión con tu cuenta.');
-        await guardarToken(result.token);
-      }
+      const result = await peticionSistema<SolicitudVerificacionLogin>(rutaAuth('registro'), { metodo: 'POST', datos: { ...form, nombre_completo: form.nombre_completo.trim(), correo: form.correo.trim().toLowerCase(), usuario: form.usuario.trim().toLowerCase(), telefono: form.telefono.trim() } });
       setForm(prev => ({ ...prev, contrasena: '' })); setConfirmacion('');
-      await comprobarSesion();
+      setDesafio(prepararDesafioLogin(result));
     } catch (err) { setError(errorTexto(err)); }
     finally { bloqueo.current = false; setLoading(false); }
   }
-  return <AuthFrame registro>
+  if (desafio) return <LoginVerification inicial={desafio} headerShown onCancelar={() => router.replace('/login' as Href)} />;
+  return <AuthFrame headerShown>
     <View style={styles.cardIcon}><Ionicons name="person-add-outline" color={colors.primary} size={25} /></View>
     <Text accessibilityRole="header" style={styles.cardTitle}>Crea tu cuenta</Text>
-    <Text style={styles.description}>Después podrás crear una organización o solicitar acceso a tu equipo.</Text>
+    <Text style={styles.description}>Verificaremos tu correo con un código. Después podrás crear una organización o solicitar acceso a tu equipo.</Text>
     <Field label="Nombre completo" value={form.nombre_completo} onChangeText={v => cambiar('nombre_completo', v)} autoComplete="name" textContentType="name" maxLength={150} editable={!loading} />
     <Field label="Correo electrónico" placeholder="nombre@empresa.com" value={form.correo} onChangeText={v => cambiar('correo', v)} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="email" textContentType="emailAddress" maxLength={254} editable={!loading} />
     <Field label="Teléfono" placeholder="Incluye la lada" value={form.telefono} onChangeText={v => cambiar('telefono', v)} keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" maxLength={25} editable={!loading} />
@@ -115,10 +94,3 @@ export function RegistroScreen() {
     <Button label="Ya tengo una cuenta" variant="secondary" disabled={loading} onPress={() => router.replace('/login' as Href)} />
   </AuthFrame>;
 }
-
-const styles = StyleSheet.create({
-  flex: { flex: 1 }, content: { flexGrow: 1, padding: 24, gap: 28, justifyContent: 'center', width: '100%', maxWidth: 510, alignSelf: 'center' },
-  brand: { alignItems: 'center', gap: 14 }, logo: { width: 80, height: 80, borderRadius: 20 }, brandCopy: { width: '100%', minWidth: 0 }, brandTitle: { color: '#FFF', fontSize: 26, fontWeight: '800', letterSpacing: 0.6, textAlign: 'center' }, brandSubtitle: { color: '#94ACCB', fontSize: 12, lineHeight: 18, marginTop: 6, textAlign: 'center' },
-  loginCard: { width: '100%', padding: 24, borderRadius: 23, gap: 15 }, cardIcon: { width: 47, height: 47, borderRadius: 15, backgroundColor: '#EAF2FF', justifyContent: 'center', alignItems: 'center' }, cardTitle: { fontSize: 24, color: colors.ink, fontWeight: '800', letterSpacing: -0.7 }, description: { color: colors.muted, fontSize: 13, lineHeight: 21, marginTop: -5, marginBottom: 4 },
-  showPassword: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 7 }, showText: { color: colors.muted, fontSize: 12 }, divider: { textAlign: 'center', fontSize: 12, color: colors.muted, paddingTop: 7 }, footer: { color: '#7891B3', textAlign: 'center', fontSize: 10, letterSpacing: 1.6 },
-});

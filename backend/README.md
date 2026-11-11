@@ -39,8 +39,13 @@ Todas las rutas siguientes parten de `/api/sistema/app/`. Envía `Content-Type: 
 | Método y ruta | Comportamiento |
 | --- | --- |
 | `GET csrf/` | Token CSRF para navegador. |
-| `POST registro/` o `movil/registro/` | Nombre completo, correo, teléfono, usuario y contraseña; crea cuenta y sesión. |
-| `POST login/` o `movil/login/` | `{usuario, contrasena}`; usuario admite nombre, correo o teléfono. |
+| `POST registro/` o `movil/registro/` | Nombre completo, correo, teléfono, usuario y contraseña; crea cuenta y solicita verificación por correo, sin abrir sesión. |
+| `POST login/` o `movil/login/` | `{usuario, contrasena}`; usuario admite nombre, correo o teléfono. Devuelve `requiere_verificacion`, `verificacion_id`, `correo_destino`, `expira_en` y `reenviar_en`. |
+| `POST verificacion-login/verificar/` o `movil/verificacion-login/verificar/` | `{verificacion_id, codigo}`; confirma el correo, abre la sesión y revoca las anteriores. |
+| `POST verificacion-login/reenviar/` o `movil/verificacion-login/reenviar/` | `{verificacion_id}`; envía un código nuevo tras el plazo de espera. |
+| `POST recuperacion/solicitar/` o `movil/recuperacion/solicitar/` | `{correo}`; solicita un código y devuelve `recuperacion_id`, `expira_en` y `reenviar_en`. |
+| `POST recuperacion/verificar/` o `movil/recuperacion/verificar/` | `{recuperacion_id, codigo}`; verifica el código y entrega `token_recuperacion` temporal. |
+| `POST recuperacion/restablecer/` o `movil/recuperacion/restablecer/` | `{token_recuperacion, contrasena, confirmacion}`; cambia la contraseña, revoca sesiones y envía el aviso; `correo_enviado` indica si el proveedor lo aceptó. |
 | `GET yo/` | Usuario, organización, rol y estado de acceso actuales. |
 | `GET/PATCH cuenta/` | Datos personales y contraseña; cambios sensibles exigen `contrasena_actual`. |
 | `POST salir/` | Revoca la sesión actual. |
@@ -70,11 +75,13 @@ El cliente contiene `nombre`, `correo`, `telefono`, `comentarios`, `hubo_venta`,
 
 ## Sesiones y acceso
 
-Las rutas nativas `movil/login/` y `movil/registro/` entregan un token para SecureStore y no establecen la cookie web. Las demás rutas nativas reciben `Authorization: Bearer TOKEN`. Las rutas web establecen la cookie HttpOnly `movil_sesion` y requieren CSRF para escrituras. Nunca guardes tokens en localStorage. Las sesiones duran 30 días y la base conserva únicamente su hash.
+Login y registro solicitan primero un código por correo. Solo `movil/verificacion-login/verificar/` entrega el token para SecureStore; la verificación web establece la cookie HttpOnly `movil_sesion`. Las demás rutas nativas reciben `Authorization: Bearer TOKEN` y las escrituras web requieren CSRF. Nunca guardes tokens en localStorage. Las sesiones nuevas duran hasta su revocación y la base conserva únicamente su hash. La cookie web dura 400 días y se renueva con el uso, sujeta a los límites del navegador. Confirmar otro inicio de sesión revoca las sesiones anteriores.
 
 La pertenencia y el rol se consultan en cada petición. Las búsquedas y modificaciones se limitan a la organización de la sesión. Rechazar o retirar una membresía no elimina la cuenta personal. Los cambios administrativos se serializan por organización y revalidan al administrador antes de guardar.
 
-El registro y login tienen límites persistentes en la base móvil, además de bloqueo por fallos de contraseña. La aplicación nueva no requiere correo ni los códigos del sistema original. Las rutas antiguas mantienen sus reglas anteriores.
+El registro, login, verificación y recuperación tienen límites persistentes en la base móvil, además de bloqueo por fallos de contraseña. El inicio de sesión utiliza contraseña y código por correo. Los códigos de login y recuperación están separados y no son intercambiables. La [guía de verificación](../docs/VERIFICACION_LOGIN.md) describe la persistencia, el reenvío y el cambio de dispositivo; las rutas del sistema antiguo mantienen sus reglas anteriores.
+
+Configura `RESEND_API_KEY`, `RESEND_SENDER_EMAIL` y `RESEND_SENDER_NAME` solo en el servidor. Los códigos y permisos de cambio vencen y son de un solo uso. Al restablecer la contraseña se revocan todas las sesiones. La [guía de recuperación](../docs/RECUPERACION_CONTRASENA.md) detalla variables, migración, comprobación y el comando de reintento de avisos pendientes.
 
 ## Pruebas y producción
 

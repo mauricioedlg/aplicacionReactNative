@@ -115,7 +115,7 @@ export async function peticionSistema<T = Record<string, unknown>>(ruta: string,
   }
   const controller = new AbortController();
   const started = Date.now();
-  const isAuthRequest = /^(movil\/)?(login|registro)\/$/.test(ruta);
+  const isAuthRequest = /^(movil\/)?(login|registro|verificacion-login\/(verificar|reenviar)|recuperacion\/(solicitar|verificar|restablecer))\/$/.test(ruta);
   const trace = __DEV__ && (isAuthRequest || ruta === 'yo/');
   // Solo ruta, estado y duración: nunca registrar credenciales, códigos o tokens.
   const traceLabel = `[API ${Platform.OS}] ${method} ${ruta}`;
@@ -156,3 +156,5 @@ export async function peticionSistema<T = Record<string, unknown>>(ruta: string,
 }
 
 export const rutaAuth = (ruta: 'login' | 'registro') => `${Platform.OS === 'web' ? '' : 'movil/'}${ruta}/`;
+export const rutaVerificacionLogin = (accion: 'verificar' | 'reenviar') => `${Platform.OS === 'web' ? '' : 'movil/'}verificacion-login/${accion}/`;
+export const rutaRecuperacion = (accion: 'solicitar' | 'verificar' | 'restablecer') => `${Platform.OS === 'web' ? '' : 'movil/'}recuperacion/${accion}/`;

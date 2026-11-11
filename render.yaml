@@ -11,6 +11,16 @@ services:
         generateValue: true
       - key: NEON_MOBILE_DATABASE_URL
         sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_SENDER_EMAIL
+        sync: false
+      - key: RESEND_SENDER_NAME
+        value: "Proyectos MEG"
+      - key: MOBILE_PASSWORD_RESET_CODE_TTL_SECONDS
+        value: "600"
+      - key: MOBILE_PASSWORD_RESET_TOKEN_TTL_SECONDS
+        value: "600"
       - key: DEBUG
         value: "False"
       - key: ENABLE_INTERNAL_PROXY

@@ -19,7 +19,8 @@ class FullPaymentMigrationTests(TransactionTestCase):
         self.apps_before = self.executor.loader.project_state(self.migrate_from).apps
 
     def tearDown(self):
-        MigrationExecutor(connections['movil']).migrate(self.migrate_to)
+        executor = MigrationExecutor(connections['movil'])
+        executor.migrate(executor.loader.graph.leaf_nodes('movil'))
         super().tearDown()
 
     def test_sale_amounts_and_known_dates_survive_without_future_receipts(self):

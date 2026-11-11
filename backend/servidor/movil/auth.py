@@ -6,22 +6,24 @@ import logging
 import re
 import secrets
 import time
-from datetime import timedelta
 from functools import wraps
 
 from django.conf import settings
 from django.core.exceptions import RequestDataTooBig, ValidationError
 from django.db import DatabaseError, IntegrityError, connections, transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from django.middleware.csrf import rotate_token
 from django.utils import timezone
 
-from .models import LimiteAcceso, Membresia, Sesion
+from .models import LimiteAcceso, Membresia, Sesion, Usuario, VerificacionLogin
 
 logger = logging.getLogger(__name__)
 COOKIE = "movil_sesion"
 COOKIE_PATH = "/api/sistema/app/"
-DURACION_DIAS = 30
+# Los navegadores limitan la duración de las cookies. Se renueva al usar la app;
+# la sesión del servidor permanece vigente hasta su revocación explícita.
+DURACION_COOKIE_DIAS = 400
 
 
 class ErrorAPI(ValueError):
@@ -116,8 +118,9 @@ def acceso(*roles):
             comprobar_base()
             token = extraer_token(request)
             sesion = Sesion.objects.select_related("usuario").filter(
+                Q(expira_en__isnull=True) | Q(expira_en__gt=timezone.now()),
                 token_hash=token_hash(token), revocado_en__isnull=True,
-                expira_en__gt=timezone.now(), usuario__activo=True,
+                usuario__activo=True,
             ).first() if token else None
             if not sesion:
                 return respuesta({"mensaje": "Inicia sesión para continuar."}, 401)
@@ -128,7 +131,11 @@ def acceso(*roles):
             request.organizacion_movil = membresia.organizacion if membresia and membresia.estado == "aceptado" else None
             if roles and (not membresia or membresia.estado != "aceptado" or membresia.rol not in ("admin", *roles)):
                 return respuesta({"mensaje": "Tu cuenta no tiene acceso a este módulo de la organización."}, 403)
-            return view(request, *args, **kwargs)
+            result = view(request, *args, **kwargs)
+            if (result.status_code < 400 and "HTTP_AUTHORIZATION" not in request.META
+                    and COOKIE not in result.cookies and not sesion.revocado_en):
+                establecer_cookie(result, token)
+            return result
         return wrapped
     return decorator
 
@@ -150,15 +157,26 @@ def limitar(request, tipo, limite=20, segundos=900):
         raise ErrorAPI("Demasiadas solicitudes. Intenta de nuevo más tarde.", 429)
 
 
+def establecer_cookie(result, token):
+    result.set_cookie(COOKIE, token, max_age=DURACION_COOKIE_DIAS * 86400,
+                      path=COOKIE_PATH, secure=not settings.DEBUG, httponly=True, samesite="Lax")
+
+
 def iniciar_sesion(request, usuario):
-    token = secrets.token_urlsafe(48)
-    Sesion.objects.create(usuario=usuario, token_hash=token_hash(token), expira_en=timezone.now() + timedelta(days=DURACION_DIAS))
-    datos = {"usuario": usuario_publico(usuario)}
-    native = request.path.endswith("/movil/login/") or request.path.endswith("/movil/registro/")
-    if native:
-        datos["token"] = token
-    result = respuesta(datos)
-    if not native:
-        rotate_token(request)
-        result.set_cookie(COOKIE, token, max_age=DURACION_DIAS * 86400, path=COOKIE_PATH, secure=not settings.DEBUG, httponly=True, samesite="Lax")
-    return result
+    """Solo se llama tras verificar el correo; serializa reemplazos de sesión."""
+    with transaction.atomic(using="movil"):
+        usuario = Usuario.objects.select_for_update().get(pk=usuario.pk)
+        ahora = timezone.now()
+        token = secrets.token_urlsafe(48)
+        Sesion.objects.filter(usuario=usuario, revocado_en__isnull=True).update(revocado_en=ahora)
+        VerificacionLogin.objects.filter(usuario=usuario, usado_en__isnull=True).update(usado_en=ahora)
+        Sesion.objects.create(usuario=usuario, token_hash=token_hash(token), expira_en=None)
+        datos = {"usuario": usuario_publico(usuario)}
+        native = request.path.startswith("/api/sistema/app/movil/")
+        if native:
+            datos["token"] = token
+        result = respuesta(datos)
+        if not native:
+            rotate_token(request)
+            establecer_cookie(result, token)
+        return result

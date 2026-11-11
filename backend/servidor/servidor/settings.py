@@ -6,7 +6,7 @@ from urllib.parse import unquote, urlsplit
 from dotenv import load_dotenv
 
 from movil.database_config import configuracion_neon_movil
-from .deployment import allowed_hosts_from_environment
+from .deployment import allowed_hosts_from_environment, csrf_trusted_origins_from_environment
 
 
 # =========================================
@@ -271,7 +271,7 @@ CORS_URLS_REGEX = r"^/api/.*$"
 # Necesario para cookies con fetch credentials='include' entre
 # www.proyectosmeg.mx y api.proyectosmeg.mx (diferentes orígenes, mismo sitio).
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS.copy()
+CSRF_TRUSTED_ORIGINS = csrf_trusted_origins_from_environment(os.environ, CORS_ALLOWED_ORIGINS)
 CSRF_COOKIE_HTTPONLY = True
 
 
@@ -313,8 +313,8 @@ CONTACT_RECEIVER_EMAIL = os.getenv(
 # RESEND
 # =========================================
 #
-# EL FORMULARIO DEL LEAD MAGNET
-# UTILIZA RESEND.
+# RECUPERACIÓN Y AVISOS DE CONTRASEÑA DE LA APP,
+# ADEMÁS DE CORREOS DEL SISTEMA WEB Y LEAD MAGNET.
 # =========================================
 
 RESEND_API_KEY = os.getenv(
@@ -333,6 +333,16 @@ RESEND_SENDER_EMAIL = os.getenv(
     "RESEND_SENDER_EMAIL",
     "onboarding@resend.dev"
 ).strip()
+
+
+# Verificación y recuperación de cuentas; secretos y envío solo en Django.
+MOBILE_LOGIN_CODE_TTL_SECONDS = int(os.getenv("MOBILE_LOGIN_CODE_TTL_SECONDS", "600"))
+MOBILE_PASSWORD_RESET_CODE_TTL_SECONDS = int(os.getenv(
+    "MOBILE_PASSWORD_RESET_CODE_TTL_SECONDS", "600"
+))
+MOBILE_PASSWORD_RESET_TOKEN_TTL_SECONDS = int(os.getenv(
+    "MOBILE_PASSWORD_RESET_TOKEN_TTL_SECONDS", "600"
+))
 
 
 # =========================================

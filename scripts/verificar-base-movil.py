@@ -9,9 +9,10 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'servidor.settings')
 import django
 django.setup()
 
+from django.apps import apps
 from django.db import connections
 from django.db.migrations.loader import MigrationLoader
-from movil.models import Cliente, GastoHistorial, GastoOperativo, LimiteAcceso, Membresia, Organizacion, Requerimiento, Sesion, Usuario
+from movil.models import Cliente
 
 if 'movil' not in connections.databases:
     print('Falta NEON_MOBILE_DATABASE_URL en backend/servidor/.env.')
@@ -19,7 +20,7 @@ if 'movil' not in connections.databases:
 
 connection = connections['movil']
 connection.settings_dict.setdefault('OPTIONS', {})['connect_timeout'] = 8
-models = [Usuario, Sesion, LimiteAcceso, Organizacion, Membresia, Cliente, Requerimiento, GastoOperativo, GastoHistorial]
+models = list(apps.get_app_config('movil').get_models())
 try:
     with connection.cursor() as cursor:
         cursor.execute('BEGIN READ ONLY')

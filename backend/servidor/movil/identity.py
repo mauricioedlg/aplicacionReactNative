@@ -13,7 +13,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
-from .auth import COOKIE, COOKIE_PATH, ErrorAPI, acceso, api, comprobar_base, iniciar_sesion, leer_json, limitar, membresia_actual, respuesta, usuario_publico
+from .auth import COOKIE, COOKIE_PATH, ErrorAPI, acceso, api, comprobar_base, leer_json, limitar, membresia_actual, respuesta, usuario_publico
+from .login_verification import comprobar_correo_login, iniciar_verificacion
 from .models import Membresia, Organizacion, ROLES, Sesion, Usuario
 
 HASH_RELLENO = make_password("clave de relleno para tiempos de respuesta")
@@ -76,9 +77,14 @@ def registro(request):
     datos = leer_json(request, 8192)
     campos = datos_cuenta(datos)
     validar_clave(datos.get("contrasena"))
+    comprobar_correo_login()
     with transaction.atomic(using="movil"):
         usuario = Usuario.objects.create(**campos, contrasena_hash=make_password(datos["contrasena"]))
-        return iniciar_sesion(request, usuario)
+        result = iniciar_verificacion(request, usuario)
+        if result.status_code >= 400:
+            # Permite repetir el registro si no se pudo enviar su primer código.
+            transaction.set_rollback(True, using="movil")
+        return result
 
 
 @require_POST
@@ -108,7 +114,7 @@ def login(request):
         usuario.intentos_fallidos = 0
         usuario.bloqueado_hasta = None
         usuario.save(update_fields=["intentos_fallidos", "bloqueado_hasta", "actualizado_en"])
-        return iniciar_sesion(request, usuario)
+        return iniciar_verificacion(request, usuario)
 
 
 @require_GET

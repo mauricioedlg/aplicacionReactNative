@@ -10,7 +10,7 @@ La web de Expo y la API Django pueden publicarse en un solo Web Service mediante
 
 | Área | Comportamiento |
 | --- | --- |
-| Cuenta | Registro, acceso con usuario/correo/teléfono y contraseña, edición de datos y cambio de contraseña. |
+| Cuenta | Registro, acceso con usuario/correo/teléfono y contraseña, edición de datos y recuperación de contraseña mediante código por correo con Resend. |
 | Organización | Crear empresa e invitar usuarios registrados, buscar empresa y solicitar acceso, estados pendiente/rechazado/eliminado. |
 | Administración | Aprobar/rechazar solicitudes, asignar rol, editar organización, buscar y retirar miembros. |
 | CRM | Dashboard de ventas y conversión; registro/edición de clientes y prospectos; búsqueda por nombre, correo o teléfono y filtro de venta. |
@@ -38,9 +38,11 @@ python -m venv backend/.venv
 
 Si faltan los archivos de configuración, copia `.env.example` a `.env` y `backend/servidor/.env.example` a `backend/servidor/.env`. Conserva cualquier configuración privada existente.
 
-Configura `NEON_MOBILE_DATABASE_URL` en el archivo del servidor con una base Neon nueva y `SECRET_KEY` con una clave aleatoria de al menos 50 caracteres. Instala el esquema siguiendo [backend/BASE_MOVIL.md](backend/BASE_MOVIL.md). La app no utiliza las cuentas ni los datos del sistema web y no necesita Resend para iniciar sesión.
+Configura `NEON_MOBILE_DATABASE_URL` en el archivo del servidor con una base Neon nueva y `SECRET_KEY` con una clave aleatoria de al menos 50 caracteres. Instala el esquema siguiendo [backend/BASE_MOVIL.md](backend/BASE_MOVIL.md). La app no utiliza las cuentas ni los datos del sistema web. Configura Resend para enviar el código que confirma cada inicio de sesión nuevo; consulta la [guía de verificación y sesión persistente](docs/VERIFICACION_LOGIN.md).
 
-En este workspace la base `aplicacion_movil`, su rol dedicado y las nueve tablas ya están creados y la conexión privada está configurada. Reinicia Django para cargarla; puedes comenzar creando tu cuenta desde la aplicación.
+Para habilitar **¿Olvidaste tu contraseña?**, configura la API key y el remitente de Resend en el servidor y aplica la migración móvil pendiente. Sigue la [guía de recuperación de contraseña](docs/RECUPERACION_CONTRASENA.md); incluye todas las variables necesarias y cómo comprobar el envío después de configurarlas.
+
+En este workspace la base `aplicacion_movil`, su rol dedicado y la conexión privada ya están configurados. Aplica las migraciones pendientes y reinicia Django para cargar los cambios; puedes comenzar creando tu cuenta desde la aplicación.
 
 ```powershell
 .\backend\.venv\Scripts\python.exe backend/servidor/manage.py migrate movil --database=movil

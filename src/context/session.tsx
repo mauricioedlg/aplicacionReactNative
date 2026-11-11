@@ -14,6 +14,7 @@ const Context = createContext<Session | null>(null);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
+  const usuarioId = usuario?.id;
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const epoch = useRef(0);
@@ -32,7 +33,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (request.signal.aborted || generation !== epoch.current) return;
       if (err instanceof ApiError && err.status === 401) { await guardarToken(null); setUsuario(null); }
       else setError(err instanceof Error ? err.message : 'No se pudo verificar la sesión.');
-    } finally { if (generation === epoch.current) setCargando(false); }
+    } finally {
+      if (pending.current === request) pending.current = null;
+      if (generation === epoch.current) setCargando(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -45,6 +49,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const subscription = AppState.addEventListener('change', state => { if (state === 'active' && hayToken()) void comprobarSesion(); });
     return () => { active = false; pending.current?.abort(); stop(); stopAccess(); subscription.remove(); };
   }, [comprobarSesion]);
+
+  useEffect(() => {
+    if (usuarioId === undefined) return;
+    // Detecta el acceso desde otro dispositivo incluso si esta pantalla sigue
+    // abierta. No consulta en segundo plano ni interrumpe otra comprobación.
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active' && hayToken() && !pending.current) void comprobarSesion();
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [usuarioId, comprobarSesion]);
 
   const cerrarSesion = useCallback(async () => {
     ++epoch.current;

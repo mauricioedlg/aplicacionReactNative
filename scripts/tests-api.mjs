@@ -539,3 +539,190 @@ test('SecureStore write failures restore the prior in-memory token', async () =>
   await api.peticionSistema('yo/');
   assert.equal(requests[0].headers.Authorization, 'Bearer previous-token');
 });
+
+const recoveryActions = ['solicitar', 'verificar', 'restablecer'];
+const recoveryData = {
+  solicitar: { correo: 'private-recovery@example.test' },
+  verificar: { recuperacion_id: 'a0159cf7-7bf8-43e4-a592-4967e634fa2c', codigo: '591863' },
+  restablecer: { token_recuperacion: 'private-recovery-token', contrasena: 'PrivateRecoveryPassword2026!', confirmacion: 'PrivateRecoveryPassword2026!' },
+};
+
+test('password recovery uses platform-specific endpoints before a native session exists', async () => {
+  for (const platform of ['android', 'ios']) {
+    const { api, requests, storageCalls, logs } = loadApi({ platform });
+    assert.equal(api.hayToken(), false);
+    for (const action of recoveryActions) {
+      const route = api.rutaRecuperacion(action);
+      assert.equal(route, `movil/recuperacion/${action}/`);
+      await api.peticionSistema(route, { metodo: 'POST', datos: recoveryData[action] });
+    }
+    assert.equal(requests.length, 3);
+    for (const [index, request] of requests.entries()) {
+      const action = recoveryActions[index];
+      assert.equal(request.url, `https://api.example.test/api/sistema/app/movil/recuperacion/${action}/`);
+      assert.equal(request.method, 'POST');
+      assert.equal(request.credentials, 'omit');
+      assert.equal(request.headers.Authorization, undefined);
+      assert.equal(request.headers['X-CSRFToken'], undefined);
+      assert.equal(request.headers['Content-Type'], 'application/json');
+      assert.equal(request.cache, 'no-store');
+      assert.deepEqual(JSON.parse(request.body), recoveryData[action]);
+    }
+    assert.equal(storageCalls.length, 0);
+    assert.equal(api.hayToken(), false);
+    const publicOutput = requests.map(request => request.url).concat(logs).join('\n');
+    for (const data of Object.values(recoveryData)) {
+      for (const secret of Object.values(data)) assert.ok(!publicOutput.includes(secret), `${platform}: recovery data leaked outside the request body`);
+    }
+  }
+});
+
+test('web password recovery sends CSRF and cookies without putting credentials in browser storage', async () => {
+  const { api, requests, storageCalls } = loadApi({
+    platform: 'web',
+    fetch: async url => reply(url.endsWith('/csrf/') ? { ok: true, csrfToken: 'recovery-csrf-value' } : { ok: true }),
+  });
+  for (const action of recoveryActions) {
+    const route = api.rutaRecuperacion(action);
+    assert.equal(route, `recuperacion/${action}/`);
+    await api.peticionSistema(route, { metodo: 'POST', datos: recoveryData[action] });
+  }
+  assert.ok(requests.some(request => request.url.endsWith('/csrf/')));
+  const writes = requests.filter(request => request.method === 'POST');
+  assert.equal(writes.length, 3);
+  for (const [index, request] of writes.entries()) {
+    const action = recoveryActions[index];
+    assert.equal(request.url, `https://api.example.test/api/sistema/app/recuperacion/${action}/`);
+    assert.equal(request.headers['X-CSRFToken'], 'recovery-csrf-value');
+    assert.equal(request.headers.Authorization, undefined);
+    assert.equal(request.credentials, 'include');
+    assert.equal(request.cache, 'no-store');
+    assert.deepEqual(JSON.parse(request.body), recoveryData[action]);
+  }
+  assert.equal(storageCalls.length, 0);
+});
+
+test('recovery validation and expired-code errors do not trigger global session or access callbacks', async () => {
+  for (const platform of ['android', 'web']) {
+    for (const status of [400, 401, 403]) {
+      const { api } = loadApi({
+        platform,
+        fetch: async url => url.endsWith('/csrf/')
+          ? reply({ ok: true, csrfToken: 'recovery-csrf-value' })
+          : reply({ ok: false, mensaje: 'El código no es válido o ya venció.' }, status),
+      });
+      let expired = 0;
+      let changed = 0;
+      api.escucharSesionExpirada(() => { expired++; });
+      api.escucharAccesoActualizado(() => { changed++; });
+      for (const action of recoveryActions) {
+        await assert.rejects(api.peticionSistema(api.rutaRecuperacion(action), {
+          metodo: 'POST', datos: recoveryData[action],
+        }), error => error instanceof api.ApiError && error.status === status && /código/.test(error.message));
+      }
+      assert.equal(expired, 0, `${platform}, HTTP ${status}`);
+      assert.equal(changed, 0, `${platform}, HTTP ${status}`);
+    }
+  }
+});
+
+test('recovery requests allow 60 seconds for email delivery and never retry a POST automatically', async () => {
+  for (const action of recoveryActions) {
+    const pendingResponse = deferred();
+    const { api, timers, requests } = loadApi({ fetch: () => pendingResponse.promise });
+    const pending = api.peticionSistema(api.rutaRecuperacion(action), { metodo: 'POST', datos: recoveryData[action] });
+    assert.equal(timers.size, 1);
+    assert.equal([...timers.values()][0].ms, 60000, action);
+    pendingResponse.resolve(reply({ ok: true }));
+    await pending;
+    assert.equal(requests.length, 1);
+    assert.equal(timers.size, 0);
+  }
+});
+
+test('login verification uses native endpoints without persisting the email code or challenge', async () => {
+  for (const platform of ['android', 'ios']) {
+    const { api, requests, storageCalls, logs } = loadApi({ platform });
+    for (const action of ['verificar', 'reenviar']) {
+      const datos = { verificacion_id: '5e92d45c-cab1-4b17-9a46-fd1f5978597f', ...(action === 'verificar' ? { codigo: '194302' } : {}) };
+      const route = api.rutaVerificacionLogin(action);
+      assert.equal(route, `movil/verificacion-login/${action}/`);
+      await api.peticionSistema(route, { metodo: 'POST', datos });
+      const request = requests.at(-1);
+      assert.equal(request.credentials, 'omit');
+      assert.equal(request.headers.Authorization, undefined);
+      assert.equal(request.headers['X-CSRFToken'], undefined);
+      assert.deepEqual(JSON.parse(request.body), datos);
+      for (const value of Object.values(datos)) assert.ok(!logs.join('\n').includes(value));
+    }
+    assert.equal(storageCalls.length, 0);
+    assert.equal(api.hayToken(), false);
+  }
+});
+
+test('web verification refreshes CSRF after confirming the code and keeps credentials out of browser storage', async () => {
+  let csrfRequests = 0;
+  const { api, requests, storageCalls } = loadApi({
+    platform: 'web',
+    fetch: async url => reply(url.endsWith('/csrf/') ? { ok: true, csrfToken: `csrf-${++csrfRequests}` } : { ok: true }),
+  });
+  await api.peticionSistema(api.rutaVerificacionLogin('verificar'), { metodo: 'POST', datos: { verificacion_id: 'challenge', codigo: '194302' } });
+  await api.peticionSistema('cuenta/', { metodo: 'PATCH', datos: { nombre_completo: 'Ana' } });
+  const writes = requests.filter(request => request.method !== 'GET');
+  assert.equal(writes[0].url, 'https://api.example.test/api/sistema/app/verificacion-login/verificar/');
+  assert.equal(writes[0].headers['X-CSRFToken'], 'csrf-1');
+  assert.equal(writes[1].headers['X-CSRFToken'], 'csrf-2');
+  assert.ok(writes.every(request => request.credentials === 'include' && request.headers.Authorization === undefined));
+  assert.equal(storageCalls.length, 0);
+});
+
+test('incorrect login codes never sign out a session or trigger access refresh', async () => {
+  for (const platform of ['web', 'android', 'ios']) {
+    for (const status of [400, 401, 403, 429]) {
+      const { api } = loadApi({ platform, fetch: async url => url.endsWith('/csrf/')
+        ? reply({ ok: true, csrfToken: 'csrf' }) : reply({ ok: false, mensaje: 'Código inválido.' }, status) });
+      let callbacks = 0;
+      api.escucharSesionExpirada(() => callbacks++);
+      api.escucharAccesoActualizado(() => callbacks++);
+      for (const action of ['verificar', 'reenviar']) {
+        await assert.rejects(api.peticionSistema(api.rutaVerificacionLogin(action), { metodo: 'POST', datos: {} }), error => error.status === status);
+      }
+      assert.equal(callbacks, 0);
+    }
+  }
+});
+
+test('login verification allows email latency without retrying single-use verification requests', async () => {
+  for (const action of ['verificar', 'reenviar']) {
+    const response = deferred();
+    const { api, timers, requests } = loadApi({ fetch: () => response.promise });
+    const pending = api.peticionSistema(api.rutaVerificacionLogin(action), { metodo: 'POST', datos: {} });
+    assert.equal([...timers.values()][0].ms, 60000);
+    response.resolve(reply({ ok: true }));
+    await pending;
+    assert.equal(requests.length, 1);
+    assert.equal(timers.size, 0);
+  }
+});
+
+test('reopening the native app restores the verified session and logout removes it', async () => {
+  const persisted = new Map();
+  const secureStore = {
+    async getItemAsync(key) { return persisted.get(key) ?? null; },
+    async setItemAsync(key, value) { persisted.set(key, value); },
+    async deleteItemAsync(key) { persisted.delete(key); },
+  };
+  const first = loadApi({ secureStore });
+  await first.api.guardarToken('verified-session-token');
+  const reopened = loadApi({ secureStore });
+  assert.equal(reopened.api.hayToken(), false);
+  await reopened.api.restaurarToken();
+  await reopened.api.peticionSistema('yo/');
+  assert.equal(reopened.requests[0].headers.Authorization, 'Bearer verified-session-token');
+  await reopened.api.peticionSistema('salir/', { metodo: 'POST' });
+  await reopened.api.guardarToken(null);
+  const afterLogout = loadApi({ secureStore });
+  await afterLogout.api.restaurarToken();
+  assert.equal(afterLogout.api.hayToken(), false);
+  assert.equal(persisted.size, 0);
+});

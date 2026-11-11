@@ -14,8 +14,16 @@ BASE = "/api/sistema/app/"
 CLAVE = "UnaClaveSegura2026!"
 
 
+@override_settings(RESEND_API_KEY="re_test_key", RESEND_SENDER_EMAIL="acceso@example.com")
 class IdentityTests(TestCase):
     databases = {"default", "movil"}
+
+    def setUp(self):
+        for target, value in (("movil.login_verification.enviar_correo_resend", {"id": "test-email"}),
+                              ("movil.login_verification.secrets.randbelow", 34512)):
+            replacement = patch(target, return_value=value)
+            replacement.start()
+            self.addCleanup(replacement.stop)
 
     def crear_usuario(self, nombre="ana", telefono="8112345678"):
         return Usuario.objects.create(nombre_completo=nombre.title(), usuario=nombre, correo=f"{nombre}@example.com", telefono=telefono, contrasena_hash=make_password(CLAVE))
@@ -40,15 +48,23 @@ class IdentityTests(TestCase):
         result = self.enviar("movil/registro/", {"nombre_completo": "Ana Pérez", "usuario": "ana", "correo": "ANA@example.com", "telefono": "+52 811 234 5678", "contrasena": CLAVE, "rol": "admin"})
         self.assertEqual(result.status_code, 200, result.content)
         datos = result.json()
-        self.assertEqual(datos["usuario"]["estado_acceso"], "sin_organizacion")
-        self.assertIsNone(datos["usuario"]["rol"])
+        self.assertTrue(datos["requiere_verificacion"])
+        self.assertNotIn("usuario", datos)
+        self.assertNotIn("token", datos)
+        self.assertFalse(Sesion.objects.exists())
         self.assertNotIn(COOKIE, result.cookies)
         usuario = Usuario.objects.get(usuario="ana")
         self.assertEqual(usuario.correo, "ana@example.com")
         self.assertEqual(usuario.telefono, "528112345678")
         self.assertNotEqual(usuario.contrasena_hash, CLAVE)
-        self.assertEqual(Sesion.objects.get(usuario=usuario).token_hash, token_hash(datos["token"]))
         self.assertNotIn(CLAVE, result.content.decode())
+        verificacion = self.enviar("movil/verificacion-login/verificar/", {"verificacion_id": datos["verificacion_id"], "codigo": "034512"})
+        self.assertEqual(verificacion.status_code, 200, verificacion.content)
+        datos = verificacion.json()
+        self.assertEqual(datos["usuario"]["estado_acceso"], "sin_organizacion")
+        self.assertIsNone(datos["usuario"]["rol"])
+        self.assertEqual(Sesion.objects.get(usuario=usuario).token_hash, token_hash(datos["token"]))
+        self.assertNotIn(COOKIE, verificacion.cookies)
 
     def test_usuario_correo_y_telefono_son_identificadores_login(self):
         usuario = self.crear_usuario()
@@ -58,7 +74,11 @@ class IdentityTests(TestCase):
                 usuario.save()
             result = self.enviar("movil/login/", {"usuario": identificador, "contrasena": CLAVE})
             self.assertEqual(result.status_code, 200, result.content)
-            self.assertIn("token", result.json())
+            self.assertTrue(result.json()["requiere_verificacion"])
+            self.assertNotIn("token", result.json())
+            verificacion = self.enviar("movil/verificacion-login/verificar/", {"verificacion_id": result.json()["verificacion_id"], "codigo": "034512"})
+            self.assertEqual(verificacion.status_code, 200, verificacion.content)
+            self.assertIn("token", verificacion.json())
 
     def test_fallos_de_contrasena_bloquean_cuenta_y_no_crean_sesion(self):
         usuario = self.crear_usuario()
@@ -77,6 +97,13 @@ class IdentityTests(TestCase):
         result = web.post(BASE + "login/", data=json.dumps(datos), content_type="application/json", HTTP_X_CSRFTOKEN=csrf)
         self.assertEqual(result.status_code, 200, result.content)
         self.assertNotIn("token", result.json())
+        self.assertNotIn(COOKIE, result.cookies)
+        self.assertEqual(web.get(BASE + "yo/").status_code, 401)
+        desafio = {"verificacion_id": result.json()["verificacion_id"], "codigo": "034512"}
+        self.assertEqual(self.enviar("verificacion-login/verificar/", desafio, client=web).status_code, 403)
+        result = web.post(BASE + "verificacion-login/verificar/", data=json.dumps(desafio), content_type="application/json", HTTP_X_CSRFTOKEN=csrf)
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertNotIn("token", result.json())
         self.assertTrue(result.cookies[COOKIE]["httponly"])
         self.assertEqual(web.get(BASE + "yo/").status_code, 200)
         self.assertEqual(web.get(BASE + "yo/", HTTP_AUTHORIZATION="Bearer incorrecto").status_code, 401)
@@ -84,6 +111,11 @@ class IdentityTests(TestCase):
         result = self.enviar("movil/login/", datos, client=native)
         self.assertEqual(result.status_code, 200)
         self.assertNotIn(COOKIE, result.cookies)
+        result = self.enviar("movil/verificacion-login/verificar/", {"verificacion_id": result.json()["verificacion_id"], "codigo": "034512"}, client=native)
+        self.assertEqual(result.status_code, 200, result.content)
+        self.assertIn("token", result.json())
+        self.assertNotIn(COOKIE, result.cookies)
+        self.assertEqual(web.get(BASE + "yo/").status_code, 401)
 
     def test_sesion_expirada_revocada_y_salir(self):
         usuario = self.crear_usuario()

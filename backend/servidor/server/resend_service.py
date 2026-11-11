@@ -18,7 +18,8 @@ def enviar_correo_resend(
     destinatario,
     asunto,
     contenido_html,
-    reply_to=None
+    reply_to=None,
+    idempotency_key=None,
 ):
 
     """
@@ -126,6 +127,9 @@ def enviar_correo_resend(
     if reply_to:
 
         payload["reply_to"] = reply_to
+
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
 
 
     # =====================================================

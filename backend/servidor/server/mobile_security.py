@@ -10,10 +10,15 @@ class SistemaCsrfMiddleware(CsrfViewMiddleware):
         "/api/sistema/movil/verificar/",
         "/api/sistema/app/movil/login/",
         "/api/sistema/app/movil/registro/",
+        "/api/sistema/app/movil/verificacion-login/verificar/",
+        "/api/sistema/app/movil/verificacion-login/reenviar/",
+        "/api/sistema/app/movil/recuperacion/solicitar/",
+        "/api/sistema/app/movil/recuperacion/verificar/",
+        "/api/sistema/app/movil/recuperacion/restablecer/",
     })
 
     def process_view(self, request, callback, callback_args, callback_kwargs):
-        # Estas dos vistas verifican contraseña/código y no usan la cookie web.
+        # Estas vistas reciben credenciales explícitas y no usan la cookie web.
         # POST JSON obligatorio y rate limit compartido en seguridad API.
         if request.path in self.MOBILE_AUTH_PATHS:
             return None

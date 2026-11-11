@@ -6,21 +6,41 @@ from django.conf import settings
 from django.http import HttpResponseNotAllowed, JsonResponse
 
 
-def allowed_hosts_from_environment(environment):
-    hosts = [
-        host.strip()
-        for host in environment.get("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
-        if host.strip()
-    ]
+def _render_hostname_from_environment(environment):
     render_host = environment.get("RENDER_EXTERNAL_HOSTNAME", "").strip().lower()
     if render_host:
         # Render proporciona un hostname, nunca una URL ni un patrón wildcard.
         label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
         if len(render_host) > 253 or not re.fullmatch(rf"{label}(?:\.{label})+", render_host):
             raise ValueError("RENDER_EXTERNAL_HOSTNAME debe ser un hostname exacto")
-        if render_host not in {host.lower() for host in hosts}:
-            hosts.append(render_host)
+    return render_host
+
+
+def allowed_hosts_from_environment(environment):
+    hosts = [
+        host.strip()
+        for host in environment.get("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+        if host.strip()
+    ]
+    render_host = _render_hostname_from_environment(environment)
+    if render_host and render_host not in {host.lower() for host in hosts}:
+        hosts.append(render_host)
     return hosts
+
+
+def csrf_trusted_origins_from_environment(environment, cors_origins):
+    # Conservar los clientes web existentes y permitir configurar CSRF aparte.
+    origins = list(cors_origins)
+    origins.extend(
+        origin.strip()
+        for origin in environment.get("CSRF_TRUSTED_ORIGINS", "").split(",")
+        if origin.strip()
+    )
+    render_host = _render_hostname_from_environment(environment)
+    if render_host:
+        # La URL pública usa HTTPS aunque el salto interno Node -> Django sea HTTP.
+        origins.append(f"https://{render_host}")
+    return list(dict.fromkeys(origins))
 
 
 def _ip(value):

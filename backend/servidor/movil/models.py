@@ -62,8 +62,21 @@ class Sesion(models.Model):
     usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="sesiones")
     token_hash = models.CharField(max_length=64, unique=True)
     creado_en = models.DateTimeField(auto_now_add=True)
-    expira_en = models.DateTimeField(db_index=True)
+    expira_en = models.DateTimeField(db_index=True, null=True, blank=True)
     revocado_en = models.DateTimeField(null=True, blank=True)
+
+
+class VerificacionLogin(models.Model):
+    """Prueba de correo de un solo uso, posterior a validar la contraseña."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="verificaciones_login")
+    correo = models.EmailField(max_length=254)
+    credencial_hash = models.CharField(max_length=64)
+    codigo_hash = models.CharField(max_length=64)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    expira_en = models.DateTimeField(db_index=True)
+    intentos = models.PositiveSmallIntegerField(default=0)
+    usado_en = models.DateTimeField(null=True, blank=True)
 
 
 class LimiteAcceso(models.Model):
@@ -71,6 +84,34 @@ class LimiteAcceso(models.Model):
     ventana = models.BigIntegerField()
     cantidad = models.PositiveIntegerField(default=0)
     actualizado_en = models.DateTimeField(auto_now=True)
+
+
+class RecuperacionContrasena(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="recuperaciones")
+    correo = models.EmailField(max_length=254)
+    credencial_hash = models.CharField(max_length=64)
+    codigo_hash = models.CharField(max_length=64)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    expira_en = models.DateTimeField(db_index=True)
+    intentos = models.PositiveSmallIntegerField(default=0)
+    verificado_en = models.DateTimeField(null=True, blank=True)
+    token_hash = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    token_expira_en = models.DateTimeField(null=True, blank=True)
+    usado_en = models.DateTimeField(null=True, blank=True)
+
+
+class NotificacionSeguridad(models.Model):
+    """Confirmación de cambio de contraseña pendiente o aceptada por Resend."""
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="notificaciones_seguridad")
+    destinatario = models.EmailField(max_length=254)
+    nombre = models.CharField(max_length=150)
+    creado_en = models.DateTimeField(auto_now_add=True)
+    enviado_en = models.DateTimeField(null=True, blank=True)
+    intentos = models.PositiveIntegerField(default=0)
+    ultimo_intento_en = models.DateTimeField(null=True, blank=True)
+    reintentar_en = models.DateTimeField(db_index=True)
 
 
 class Cliente(models.Model):

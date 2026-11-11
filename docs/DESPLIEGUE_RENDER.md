@@ -41,13 +41,29 @@ La base de datos sigue fuera del contenedor, en Neon. El `backend/Dockerfile` an
 5. Pulsa **Deploy Web Service**. En el arranque verás la recolección de estáticos, las migraciones de la aplicación móvil y luego los dos servidores.
 6. Abre la URL HTTPS de Render y verifica `/healthz`, `/login`, el registro, el inicio de sesión y la carga de clientes/proyectos. Actualiza una ruta interna para comprobar también la navegación directa.
 
-El hostname `*.onrender.com` se obtiene de `RENDER_EXTERNAL_HOSTNAME`. La imagen ya configura `DEBUG=False`, `ENABLE_INTERNAL_PROXY=True` y `TRUST_PROXY_HTTPS=True`. No es necesario definir `EXPO_PUBLIC_API_URL_WEB`: la compilación Docker activa el modo de API del mismo origen, que usa `/api/sistema/app/` en el dominio de la web.
+El hostname exacto del servicio se obtiene de `RENDER_EXTERNAL_HOSTNAME` y se añade a `ALLOWED_HOSTS`; su origen `https://HOSTNAME` también se añade a `CSRF_TRUSTED_ORIGINS`. La imagen ya configura `DEBUG=False`, `ENABLE_INTERNAL_PROXY=True` y `TRUST_PROXY_HTTPS=True`. No es necesario definir `EXPO_PUBLIC_API_URL_WEB`: la compilación Docker activa el modo de API del mismo origen, que usa `/api/sistema/app/` en el dominio de la web.
 
-Para agregar un dominio personalizado, configúralo en **Settings -> Custom Domains** y añádelo a `ALLOWED_HOSTS` como hostname, sin `https://` ni rutas. Si mantienes otros clientes web en dominios diferentes, conserva sus orígenes en `CORS_ALLOWED_ORIGINS`; el cliente web de este contenedor no necesita CORS para acceder a su propia API. Las protecciones CSRF siguen activas.
+Para agregar un dominio personalizado, configúralo en **Settings -> Custom Domains**, añádelo a `ALLOWED_HOSTS` como hostname, sin `https://` ni rutas, y añade su origen completo a `CSRF_TRUSTED_ORIGINS` (por ejemplo, `https://app.example.com`). Esta variable admite varios orígenes separados por comas. Si mantienes otros clientes web en dominios diferentes, conserva sus orígenes en `CORS_ALLOWED_ORIGINS`; por compatibilidad, también se incluyen entre los orígenes CSRF. El cliente web de este contenedor no necesita CORS para acceder a su propia API. Las protecciones CSRF siguen activas.
+
+## Login bloqueado con 403 por el origen
+
+Si el log indica `Forbidden (Origin checking failed - https://TU_SERVICIO.onrender.com does not match any trusted origins.)`, Django rechazó el origen antes de comprobar las credenciales. La respuesta es HTML, por lo que la aplicación puede mostrar «El servidor no devolvió JSON». Un `401` de `/api/sistema/app/yo/` al abrir el login sin sesión es esperable y no explica ese `403`.
+
+Publica esta versión y vuelve a desplegar: el origen HTTPS del servicio se incorpora automáticamente desde `RENDER_EXTERNAL_HOSTNAME`, sin autorizar otros servicios de Render.
+
+Si necesitas corregir un despliegue anterior antes de actualizar el código, añade el origen exacto de tu servicio a `CORS_ALLOWED_ORIGINS` en **Render -> Environment**, conservando los orígenes existentes separados por comas. Por ejemplo:
+
+```dotenv
+CORS_ALLOWED_ORIGINS=https://aplicacionreactnative.onrender.com
+```
+
+Guarda la variable y vuelve a desplegar. La versión anterior obtiene sus orígenes CSRF de esa variable y todavía no lee `CSRF_TRUSTED_ORIGINS` del entorno. Después, recarga `/login` para obtener una cookie y un token CSRF nuevos e intenta iniciar sesión. El token CSRF sigue siendo obligatorio en las escrituras web.
 
 ## Publicar con Blueprint
 
-También puedes seleccionar **New -> Blueprint**, conectar el repositorio y utilizar el `render.yaml` de la raíz. Define un único Web Service con Docker, genera `SECRET_KEY` y solicita la conexión `NEON_MOBILE_DATABASE_URL` al crear el servicio. Revisa el nombre del servicio antes de aplicarlo si ya tienes otros recursos en Render.
+También puedes seleccionar **New -> Blueprint**, conectar el repositorio y utilizar el `render.yaml` de la raíz. Define un único Web Service con Docker, genera `SECRET_KEY` y solicita la conexión `NEON_MOBILE_DATABASE_URL`, `RESEND_API_KEY` y `RESEND_SENDER_EMAIL` al crear el servicio. Revisa el nombre del servicio antes de aplicarlo si ya tienes otros recursos en Render.
+
+Para activar la recuperación de contraseña en un servicio existente, agrega también `RESEND_API_KEY`, `RESEND_SENDER_EMAIL` y `RESEND_SENDER_NAME` en **Environment**. Consulta la [guía de recuperación](RECUPERACION_CONTRASENA.md) para el remitente, la vigencia de los códigos y la programación de reintentos de avisos pendientes. El primer envío del aviso se intenta automáticamente al guardar la contraseña.
 
 El Blueprint usa el plan `free` para una demostración. Para uso continuo, elige el plan que necesites; los servicios gratuitos se suspenden cuando están inactivos y tienen límites de recursos. La suspensión y los reinicios no borran los datos de Neon.
 
